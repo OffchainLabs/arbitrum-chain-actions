@@ -1,17 +1,34 @@
-import { ethers } from 'hardhat'
 import metadataHashes from './referentMetadataHashes.json'
-import { HardhatEthersProvider } from '@nomicfoundation/hardhat-ethers/internal/hardhat-ethers-provider'
+import contractAddresses from './referentContractAddresses.json'
 import {
   IBridge__factory,
   IInbox__factory,
   IRollupCore__factory,
 } from '../../typechain-types'
+import { ethers, JsonRpcProvider } from 'ethers'
 
-main()
-  .then(() => process.exit(0))
-  .catch((error: Error) => {
-    console.error(error)
-  })
+const HELP_TEXT = `Usage: yarn chain:contracts:version [--help]
+
+Reports the deployed Nitro contract versions for an Orbit chain and prints any
+supported upgrade path.
+
+Required environment variables:
+  INBOX_ADDRESS     Address of the Orbit chain inbox on the parent chain
+  PARENT_CHAIN_RPC  RPC URL for the Orbit chain's parent chain
+
+Optional environment variables:
+  JSON_OUTPUT       Set to "true" to print machine-readable JSON
+
+Example:
+  INBOX_ADDRESS=0x... PARENT_CHAIN_RPC=https://... yarn chain:contracts:version`
+
+function createLogger(jsonOutput: boolean) {
+  return (...args: unknown[]) => {
+    if (!jsonOutput) {
+      console.log(...args)
+    }
+  }
+}
 
 /**
  * Interfaces
@@ -37,26 +54,44 @@ interface MetadataHashesByVersion {
   [version: string]: MetadataHashesByNativeToken & RollupHashes
 }
 
+export interface UpgradePath {
+  actionName: string
+  targetVersion: string
+  isRecommendedVersion: boolean
+}
+export interface UpgradeRecommendation {
+  message: string
+  upgradePaths?: UpgradePath[]
+}
+
+export interface OrbitVersionerReport {
+  versions: { [key: string]: string | null }
+  upgradeRecommendation: UpgradeRecommendation
+}
+
+export type ChainVersionerReport = OrbitVersionerReport
+
 /**
  * Load the referent metadata hashes
  */
-
 const referentMetadataHashes: MetadataHashesByVersion = metadataHashes
+const referentContractAddresses: MetadataHashesByVersion = contractAddresses
 
 /**
  * Script will
  */
-async function main() {
-  if (!process.env.INBOX_ADDRESS) {
-    throw new Error('INBOX_ADDRESS env variable shall be set')
-  }
+export async function runChainVersioner(
+  inboxAddress: string,
+  parentRpcUrl: string,
+  jsonOutput: boolean
+): Promise<OrbitVersionerReport> {
+  const log = createLogger(jsonOutput)
 
   /// get provider
-  const provider = ethers.provider
+  const provider = new ethers.JsonRpcProvider(parentRpcUrl)
   const chainId = (await provider.getNetwork()).chainId
-  const inboxAddress = process.env.INBOX_ADDRESS!
 
-  console.log(
+  log(
     `Get the version of Orbit chain's nitro contracts (inbox ${inboxAddress}), hosted on chain ${chainId}`
   )
 
@@ -71,68 +106,71 @@ async function main() {
   const challengeManagerAddress = await rollup.challengeManager()
   const rollupEventInboxAddress = await rollup.rollupEventInbox()
 
-  // get metadata hashes
-  const metadataHashes: { [key: string]: string } = {
-    Inbox: await _getMetadataHash(
-      await _getLogicAddress(inboxAddress, provider),
-      provider
+  // get logic addresses for each contract
+  const logicAddresses: { [key: string]: string } = {
+    Inbox: await _getLogicAddress(inboxAddress, provider),
+    Outbox: await _getLogicAddress(outboxAddress, provider),
+    SequencerInbox: await _getLogicAddress(seqInboxAddress, provider),
+    Bridge: await _getLogicAddress(bridgeAddress, provider),
+    RollupEventInbox: await _getLogicAddress(rollupEventInboxAddress, provider),
+    RollupProxy: rollupAddress,
+    RollupAdminLogic: await _getLogicAddress(rollupAddress, provider),
+    RollupUserLogic: await _getAddressAtStorageSlot(
+      rollupAddress,
+      provider,
+      '0x2b1dbce74324248c222f0ec2d5ed7bd323cfc425b336f0253c5ccfda7265546d'
     ),
-    Outbox: await _getMetadataHash(
-      await _getLogicAddress(outboxAddress, provider),
-      provider
-    ),
-    SequencerInbox: await _getMetadataHash(
-      await _getLogicAddress(seqInboxAddress, provider),
-      provider
-    ),
-    Bridge: await _getMetadataHash(
-      await _getLogicAddress(bridgeAddress, provider),
-      provider
-    ),
-    RollupEventInbox: await _getMetadataHash(
-      await _getLogicAddress(rollupEventInboxAddress, provider),
-      provider
-    ),
-    RollupProxy: await _getMetadataHash(rollupAddress, provider),
-    RollupAdminLogic: await _getMetadataHash(
-      await _getLogicAddress(rollupAddress, provider),
-      provider
-    ),
-    RollupUserLogic: await _getMetadataHash(
-      await _getAddressAtStorageSlot(
-        rollupAddress,
-        provider,
-        '0x2b1dbce74324248c222f0ec2d5ed7bd323cfc425b336f0253c5ccfda7265546d'
-      ),
-      provider
-    ),
-    ChallengeManager: await _getMetadataHash(
-      await _getLogicAddress(challengeManagerAddress, provider),
-      provider
-    ),
+    ChallengeManager: await _getLogicAddress(challengeManagerAddress, provider),
   }
 
   if (process.env.DEV === 'true') {
-    console.log('\nMetadataHashes of deployed contracts:', metadataHashes, '\n')
+    log('\nLogic addresses of deployed contracts:', logicAddresses, '\n')
   }
 
   let isFeeTokenChain = false
   const versions: { [key: string]: string | null } = {}
-  // get and print version per bridge contract
-  Object.keys(metadataHashes).forEach(key => {
-    const { version, isErc20 } = _getVersionOfDeployedContract(
-      metadataHashes[key]
-    )
-    versions[key] = version
-    if (key === 'Bridge' && isErc20) isFeeTokenChain = true
-    console.log(
+
+  for (const key of Object.keys(logicAddresses)) {
+    // try address-based lookup first (for create2 deployments like v3.2.0+)
+    let result = _getVersionOfDeployedContractByAddress(logicAddresses[key])
+
+    if (!result.version) {
+      // fall back to metadata hash lookup
+      try {
+        const metadataHash = await _getMetadataHash(
+          logicAddresses[key],
+          provider
+        )
+        if (process.env.DEV === 'true') {
+          log(`MetadataHash of deployed ${key}:`, metadataHash)
+        }
+        result = _getVersionOfDeployedContract(metadataHash)
+      } catch {
+        // metadata hash extraction can fail for contracts without standard metadata
+      }
+    }
+
+    versions[key] = result.version
+    if (key === 'Bridge' && result.isErc20) isFeeTokenChain = true
+    log(
       `Version of deployed ${key}: ${versions[key] ? versions[key] : 'unknown'}`
     )
-  })
+  }
 
   // TODO: make this more generic to support other other upgrade paths in the future
   // TODO: also check  osp
-  _checkForPossibleUpgrades(versions, isFeeTokenChain, chainId)
+  const upgradeRecommendation = _checkForPossibleUpgrades(
+    versions,
+    isFeeTokenChain,
+    chainId
+  )
+
+  log(upgradeRecommendation.message)
+
+  return {
+    versions,
+    upgradeRecommendation,
+  }
 }
 
 function _checkForPossibleUpgrades(
@@ -141,9 +179,13 @@ function _checkForPossibleUpgrades(
   },
   isFeeTokenChain: boolean,
   parentChainId: bigint
-) {
+): UpgradeRecommendation {
   // version need to be in descending order
   const targetVersionsDescending = [
+    {
+      version: 'v3.2.0',
+      actionName: 'NitroContracts3Point2Point0UpgradeAction',
+    },
     {
       version: 'v3.1.0',
       actionName: 'BOLD UpgradeAction',
@@ -181,10 +223,22 @@ function _checkForPossibleUpgrades(
       parentChainId
     )
   ) {
-    console.log(
-      'This deployment can be upgraded to both v2.1.3 and v3.1.0. v3.1.0 is recommended'
-    )
-    return
+    return {
+      message:
+        'This deployment can be upgraded to both v2.1.3 and v3.1.0. v3.1.0 is recommended',
+      upgradePaths: [
+        {
+          actionName: 'NitroContracts2Point1Point3UpgradeAction',
+          targetVersion: 'v2.1.3',
+          isRecommendedVersion: false,
+        },
+        {
+          actionName: 'BOLDUpgradeAction',
+          targetVersion: 'v3.1.0',
+          isRecommendedVersion: true,
+        },
+      ],
+    }
   }
 
   let canUpgradeTo = ''
@@ -207,13 +261,21 @@ function _checkForPossibleUpgrades(
     }
   }
   if (canUpgradeTo !== '') {
-    console.log(
-      `This deployment can be upgraded to ${canUpgradeTo} using ${canUpgradeToActionName}`
-    )
-    return
+    return {
+      message: `This deployment can be upgraded to ${canUpgradeTo} using ${canUpgradeToActionName}`,
+      upgradePaths: [
+        {
+          actionName: canUpgradeToActionName,
+          targetVersion: canUpgradeTo,
+          isRecommendedVersion: true,
+        },
+      ],
+    }
   }
 
-  console.log('No upgrade path found')
+  return {
+    message: 'No upgrade path found',
+  }
 }
 
 function _canBeUpgradedToTargetVersion(
@@ -230,7 +292,19 @@ function _canBeUpgradedToTargetVersion(
 
   let supportedSourceVersionsPerContract: { [key: string]: string[] } = {}
 
-  if (targetVersion === 'v3.1.0') {
+  if (targetVersion === 'v3.2.0') {
+    supportedSourceVersionsPerContract = {
+      Inbox: ['v3.1.0'],
+      Outbox: ['v3.1.0'],
+      Bridge: ['v3.1.0'],
+      RollupEventInbox: ['any'],
+      RollupProxy: ['any'],
+      RollupAdminLogic: ['v3.1.0'],
+      RollupUserLogic: ['v3.1.0'],
+      ChallengeManager: ['v3.1.0'],
+      SequencerInbox: ['v3.1.0'],
+    }
+  } else if (targetVersion === 'v3.1.0') {
     // todo: remove once nitro supports bold for L3's
     if (parentChainId !== 1n && parentChainId !== 11155111n) {
       supportedSourceVersionsPerContract = {
@@ -434,6 +508,35 @@ function _canBeUpgradedToTargetVersion(
   return true
 }
 
+function _getVersionOfDeployedContractByAddress(logicAddress: string): {
+  version: string | null
+  isErc20: boolean
+} {
+  const normalized = logicAddress.toLowerCase()
+  for (const [version] of Object.entries(referentContractAddresses).reverse()) {
+    const versionAddresses = referentContractAddresses[version]
+    const allAddresses = [
+      ...Object.values(versionAddresses.eth).flat(),
+      ...Object.values(versionAddresses.erc20).flat(),
+      ...versionAddresses.RollupProxy,
+      ...versionAddresses.RollupAdminLogic,
+      ...versionAddresses.RollupUserLogic,
+      ...versionAddresses.ChallengeManager,
+    ].map(a => a.toLowerCase())
+
+    if (allAddresses.includes(normalized)) {
+      const erc20Addresses = [
+        ...Object.values(versionAddresses.erc20).flat(),
+      ].map(a => a.toLowerCase())
+      if (erc20Addresses.includes(normalized)) {
+        return { version, isErc20: true }
+      }
+      return { version, isErc20: false }
+    }
+  }
+  return { version: null, isErc20: false }
+}
+
 function _getVersionOfDeployedContract(metadataHash: string): {
   version: string | null
   isErc20: boolean
@@ -466,7 +569,7 @@ function _getVersionOfDeployedContract(metadataHash: string): {
 
 async function _getMetadataHash(
   contractAddress: string,
-  provider: HardhatEthersProvider
+  provider: JsonRpcProvider
 ): Promise<string> {
   const bytecode = await provider.getCode(contractAddress)
 
@@ -484,7 +587,7 @@ async function _getMetadataHash(
 
 async function _getLogicAddress(
   contractAddress: string,
-  provider: HardhatEthersProvider
+  provider: JsonRpcProvider
 ): Promise<string> {
   const logic = (
     await _getAddressAtStorageSlot(
@@ -503,7 +606,7 @@ async function _getLogicAddress(
 
 async function _getAddressAtStorageSlot(
   contractAddress: string,
-  provider: HardhatEthersProvider,
+  provider: JsonRpcProvider,
   storageSlotBytes: string
 ): Promise<string> {
   const storageValue = await provider.getStorage(
@@ -521,4 +624,51 @@ async function _getAddressAtStorageSlot(
 
   // return address as checksum address
   return ethers.getAddress(formatAddress)
+}
+
+// Docker / CLI entrypoint
+if (require.main === module) {
+  const args = process.argv.slice(2)
+  if (args.includes('--help')) {
+    process.stdout.write(`${HELP_TEXT}\n`)
+    process.exit(0)
+  }
+
+  const inboxAddress = process.env.INBOX_ADDRESS
+  const parentRpcUrl = process.env.PARENT_CHAIN_RPC
+  const jsonOutput = process.env.JSON_OUTPUT?.toLowerCase() === 'true'
+
+  if (!inboxAddress) {
+    const errorMessage = 'INBOX_ADDRESS env variable should be set'
+    if (jsonOutput) {
+      process.stderr.write(`${JSON.stringify({ error: errorMessage })}\n`)
+      process.exit(1)
+    }
+    throw new Error(errorMessage)
+  }
+
+  if (!parentRpcUrl) {
+    const errorMessage = 'PARENT_CHAIN_RPC env variable should be set'
+    if (jsonOutput) {
+      process.stderr.write(`${JSON.stringify({ error: errorMessage })}\n`)
+      process.exit(1)
+    }
+    throw new Error(errorMessage)
+  }
+
+  runChainVersioner(inboxAddress, parentRpcUrl, jsonOutput)
+    .then(result => {
+      if (jsonOutput) {
+        process.stdout.write(`${JSON.stringify(result)}\n`)
+      }
+      process.exit(0)
+    })
+    .catch((error: Error) => {
+      if (jsonOutput) {
+        process.stderr.write(`${JSON.stringify({ error: error.message })}\n`)
+      } else {
+        console.error(error)
+      }
+      process.exit(1)
+    })
 }
