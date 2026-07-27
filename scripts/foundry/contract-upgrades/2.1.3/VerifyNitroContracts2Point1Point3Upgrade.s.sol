@@ -30,7 +30,7 @@ interface ISequencerInbox {
 contract VerifyNitroContracts2Point1Point3Upgrade is Script {
     function run() public {
         address inbox = vm.envAddress("INBOX_ADDRESS");
-        
+
         // make sure addSequencerL2BatchFromOrigin reverts with NotCodelessOrigin()
         // old check is just tx.origin == msg.sender, now we have an extra check for codelessness
         address sequencerInbox = IBridge(IInbox(inbox).bridge()).sequencerInbox();
