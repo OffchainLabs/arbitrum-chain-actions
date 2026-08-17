@@ -27,13 +27,10 @@ Please refer to the top [README](/README.md#check-version-and-upgrade-path) `Che
 
 ## Deployed instances
 
-### Mainnets
-- L1 Mainnet: TODO
-- L2 Arb1: TODO
-- L2 Base: TODO
+Deployed with CREATE2, so the address is the same on every chain: `0x9F5d36c1219fadDD614e2DBBa8aE6dD5F56c3DBb`
 
-### Testnets
-- TODO
+- Mainnets: L1 Mainnet, Arb1, Base
+- Testnets: Sepolia, ArbSepolia
 
 ## How to use it
 
