@@ -1,0 +1,91 @@
+name: Prepare Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version to release, for example 1.0.2 or 1.0.2-alpha.0
+        required: true
+        type: string
+
+jobs:
+  prepare:
+    name: Prepare release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "Version must be SemVer like 1.0.2 or 1.0.2-alpha.0." >&2
+            exit 1
+          fi
+
+          BRANCH_NAME="release/v$RELEASE_VERSION"
+
+          if git ls-remote --exit-code --heads origin "$BRANCH_NAME" >/dev/null 2>&1; then
+            echo "Branch $BRANCH_NAME already exists." >&2
+            exit 1
+          fi
+
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> "$GITHUB_ENV"
+
+      - name: Create release branch
+        run: git switch -c "$BRANCH_NAME"
+
+      - name: Update package version
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const fs = require('fs')
+
+          const packageJsonPath = 'package.json'
+          const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+          packageJson.version = process.env.RELEASE_VERSION
+          fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`)
+          NODE
+
+          if git diff --quiet -- package.json; then
+            echo "package.json already has version $RELEASE_VERSION." >&2
+            exit 1
+          fi
+
+      - name: Create release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_USER_EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
+          GIT_USER_NAME: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "$GIT_USER_NAME"
+          git config user.email "$GIT_USER_EMAIL"
+          git add package.json
+          git commit -m "Prepare release $RELEASE_VERSION"
+
+          git push --set-upstream origin "$BRANCH_NAME"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH_NAME" \
+            --title "Prepare release $RELEASE_VERSION" \
+            --body "Updates package.json to $RELEASE_VERSION. After merge, the publish workflow will create v$RELEASE_VERSION and publish the npm package."

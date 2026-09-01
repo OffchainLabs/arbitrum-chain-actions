@@ -1,43 +1,82 @@
 name: Publish NPM Package
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Base version to publish to npm, for example 1.0.2
-        required: true
-        type: string
-      tag:
-        description: Release channel
-        required: true
-        default: alpha
-        type: choice
-        options:
-          - alpha
-          - beta
-          - rc
-          - latest
-      prerelease:
-        description: Prerelease number for alpha, beta, or rc
-        required: false
-        default: '0'
-        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  get-release-version:
+    name: Get release version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      npm-dist-tag: ${{ steps.release.outputs.npm-dist-tag }}
+      package-name: ${{ steps.release.outputs.package-name }}
+      tag-name: ${{ steps.release.outputs.tag-name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve release version
+        id: release
+        run: |
+          set -euo pipefail
+
+          OLD_VERSION="$(git show "${{ github.event.before }}:package.json" | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
+          NEW_VERSION="$(node -pe "require('./package.json').version")"
+
+          if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+            echo "package.json changed, but version did not change." >&2
+            exit 1
+          fi
+
+          if [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            NPM_DIST_TAG="latest"
+          elif [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$ ]]; then
+            NPM_DIST_TAG="${BASH_REMATCH[1]}"
+          else
+            echo "Version must be SemVer like 1.0.2 or 1.0.2-alpha.0." >&2
+            exit 1
+          fi
+
+          PACKAGE_NAME="$(node -pe "require('./package.json').name")"
+          TAG_NAME="v$NEW_VERSION"
+
+          echo "package-name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag-name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "npm-dist-tag=$NPM_DIST_TAG" >> "$GITHUB_OUTPUT"
+
   publish:
     name: Publish to npm
+    needs: get-release-version
     runs-on: ubuntu-latest
     environment: publish
     permissions:
       id-token: write
       contents: write
+    env:
+      NPM_DIST_TAG: ${{ needs.get-release-version.outputs.npm-dist-tag }}
+      NPM_PACKAGE_VERSION: ${{ needs.get-release-version.outputs.version }}
+      PACKAGE_NAME: ${{ needs.get-release-version.outputs.package-name }}
+      RELEASE_TAG: ${{ needs.get-release-version.outputs.tag-name }}
     steps:
-      - name: Ensure main branch
-        if: github.ref != 'refs/heads/main'
-        run: |
-          echo "This workflow can only be run from main." >&2
-          exit 1
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -48,6 +87,15 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      - name: Ensure package version is unpublished
+        run: |
+          set -euo pipefail
+
+          if npm view "$PACKAGE_NAME@$NPM_PACKAGE_VERSION" version >/dev/null 2>&1; then
+            echo "$PACKAGE_NAME@$NPM_PACKAGE_VERSION is already published." >&2
+            exit 1
+          fi
 
       - name: Set up Yarn
         run: npm install --global yarn@1.22.22
@@ -60,36 +108,33 @@ jobs:
       - name: Install dependencies
         run: yarn --frozen-lockfile
 
-      - name: Resolve package version and npm dist-tag
+      - name: Configure git
         env:
-          BASE_VERSION: ${{ inputs.version }}
-          RELEASE_CHANNEL: ${{ inputs.tag }}
-          PRERELEASE_NUMBER: ${{ inputs.prerelease }}
+          GIT_USER_EMAIL: ${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com
+          GIT_USER_NAME: ${{ github.actor }}
         run: |
-          if [[ ! "$BASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Version must be a numeric SemVer base version like 1.0.2." >&2
-            exit 1
-          fi
+          git config user.name "$GIT_USER_NAME"
+          git config user.email "$GIT_USER_EMAIL"
 
-          if [ "$RELEASE_CHANNEL" = "release" ]; then
-            echo "NPM_PACKAGE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
-            echo "NPM_DIST_TAG=latest" >> "$GITHUB_ENV"
-          else
-            if [[ ! "$PRERELEASE_NUMBER" =~ ^[0-9]+$ ]]; then
-              echo "Prerelease number must be a non-negative integer like 0 or 1." >&2
+      - name: Verify release tag
+        run: |
+          set -euo pipefail
+
+          git fetch --tags origin
+
+          if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            TAG_SHA="$(git rev-list -n 1 "$RELEASE_TAG")"
+            HEAD_SHA="$(git rev-parse HEAD)"
+
+            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "Tag $RELEASE_TAG already exists at $TAG_SHA, not current commit $HEAD_SHA." >&2
               exit 1
             fi
-            echo "NPM_PACKAGE_VERSION=$BASE_VERSION-$RELEASE_CHANNEL.$PRERELEASE_NUMBER" >> "$GITHUB_ENV"
-            echo "NPM_DIST_TAG=$RELEASE_CHANNEL" >> "$GITHUB_ENV"
+
+            echo "Tag $RELEASE_TAG already exists at the current commit."
+          else
+            echo "Tag $RELEASE_TAG is available."
           fi
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Set package version
-        run: npm version "$NPM_PACKAGE_VERSION"
 
       - name: Build package
         run: yarn build:package
@@ -97,10 +142,16 @@ jobs:
       - name: Pack package
         run: NODE_AUTH_TOKEN="" npm publish --dry-run --tag "$NPM_DIST_TAG"
 
+      - name: Create release tag
+        run: |
+          set -euo pipefail
+
+          if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            echo "Tag $RELEASE_TAG already exists at the current commit."
+          else
+            git tag "$RELEASE_TAG"
+            git push origin "$RELEASE_TAG"
+          fi
+
       - name: Publish package
         run: NODE_AUTH_TOKEN="" npm publish --tag "$NPM_DIST_TAG"
-
-      - name: Push version commit and tag
-        run: |
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-          git push origin "v$NPM_PACKAGE_VERSION"
