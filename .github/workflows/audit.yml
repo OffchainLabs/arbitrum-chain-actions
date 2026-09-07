@@ -20,7 +20,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: 1.7.1
+          version: 1.8.1
 
       - run: yarn minimal-install
       - run: yarn audit:ci
