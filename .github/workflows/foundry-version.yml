@@ -65,9 +65,7 @@ jobs:
           jq -n \
             --arg sha "$HEAD_SHA" \
             --arg title "Foundry $latest available (pinned $pinned)" \
-            --arg summary "CI and the Dockerfile pin foundry \`$pinned\`. The latest stable release is \`$latest\`.
-
-          Bumping means regenerating \`.gas-snapshot\` in the same PR: gas accounting can change between foundry releases, and \`yarn test:gas-check\` compares against absolute recorded values with only 1% tolerance." \
+            --arg summary "CI and the Dockerfile pin foundry \`$pinned\`. The latest stable release is \`$latest\`." \
             '{
               name: "Foundry needs updating",
               head_sha: $sha,
