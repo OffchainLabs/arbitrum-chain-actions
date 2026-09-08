@@ -30,7 +30,7 @@ Please refer to the top [README](/README.md#check-version-and-upgrade-path) `Che
 Deployed with CREATE2, so the address is the same on every chain: `0x9F5d36c1219fadDD614e2DBBa8aE6dD5F56c3DBb`
 
 - Mainnets: L1 Mainnet, Arb1, Base
-- Testnets: Sepolia, ArbSepolia
+- Testnets: Sepolia, ArbSepolia, Base Sepolia
 
 ## How to use it
 
