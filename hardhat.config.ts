@@ -66,7 +66,7 @@ function getSourcesFromFoundryToml(profile: string): string {
   const defaultConfig = data.profile['default']
   const profileConfig = data.profile[profile || 'default']
 
-  return profileConfig?.src || defaultConfig.src
+  return profileConfig?.src || defaultConfig.src || 'src'
 }
 
 export default config
