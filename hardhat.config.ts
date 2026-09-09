@@ -45,7 +45,7 @@ function getSolidityConfigFromFoundryToml(profile: string): SolidityUserConfig {
   const data = toml.parse(fs.readFileSync('foundry.toml', 'utf-8'))
 
   const defaultConfig = data.profile['default']
-  const profileConfig = data.profile[profile || 'default']
+  const profileConfig = data.profile[profile]
 
   const solidity = {
     version: profileConfig?.solc_version || defaultConfig.solc_version,
@@ -64,7 +64,7 @@ function getSourcesFromFoundryToml(profile: string): string {
   const data = toml.parse(fs.readFileSync('foundry.toml', 'utf-8'))
 
   const defaultConfig = data.profile['default']
-  const profileConfig = data.profile[profile || 'default']
+  const profileConfig = data.profile[profile]
 
   return profileConfig?.src || defaultConfig.src || 'src'
 }
