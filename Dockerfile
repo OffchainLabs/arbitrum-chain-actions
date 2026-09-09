@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Foundry
 ENV PATH="/root/.foundry/bin:${PATH}"
-RUN curl -L https://foundry.paradigm.xyz | bash && foundryup --install stable
+RUN curl -L https://foundry.paradigm.xyz | bash && foundryup --install 1.7.1
 
 # Install Yarn Classic (v1) - matches the repo's yarn.lock format
 RUN npm install -g --force yarn@1.22.22
