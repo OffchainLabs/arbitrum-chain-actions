@@ -18,9 +18,7 @@ jobs:
           node-version: 18
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
 
       - run: yarn minimal-install
       - run: yarn test:unit
@@ -33,9 +31,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
 
       - run: yarn minimal-install
       - run: yarn test:sizes
@@ -48,9 +44,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
 
       - run: yarn minimal-install
       - run: yarn test:gas-check
@@ -63,9 +57,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
 
       - run: yarn minimal-install
       - run: yarn test:sigs
@@ -78,9 +70,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
         
       - run: yarn minimal-install
       - run: yarn test:storage
