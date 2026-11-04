@@ -23,9 +23,7 @@ jobs:
           nitro-testnode-ref: release
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
 
       - run: yarn
       - run: cp .env.example .env && yarn test:e2e
@@ -50,9 +48,7 @@ jobs:
   #         l3-node: true
 
   #     - name: Install Foundry
-  #       uses: foundry-rs/foundry-toolchain@v1
-  #       with:
-  #         version: 1.8.1
+  #       uses: ./.github/actions/install-foundry
 
   #     - run: yarn
   #     - run: cp .env.example .env && yarn test:e2e
@@ -78,9 +74,7 @@ jobs:
   #         args: --l3-fee-token
 
   #     - name: Install Foundry
-  #       uses: foundry-rs/foundry-toolchain@v1
-  #       with:
-  #         version: 1.8.1
+  #       uses: ./.github/actions/install-foundry
 
   #     - run: yarn
   #     - run: cp .env.example .env && yarn test:e2e

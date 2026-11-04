@@ -1,0 +1,21 @@
+name: Foundry Update
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+jobs:
+  foundry-update:
+    uses: OffchainLabs/actions/.github/workflows/foundry-update.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      reviewer: yahgwai
+      fix-up: |
+        sed -i -E "s/(foundryup --install )[^ ]+/\1${LATEST#v}/" Dockerfile
+        forge fmt
+        yarn gas-snapshot
+        yarn test:sigs || true
+        yarn test:storage || true

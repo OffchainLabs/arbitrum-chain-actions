@@ -18,9 +18,7 @@ jobs:
           node-version: 18
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
 
       - run: yarn minimal-install
       - run: yarn audit:ci

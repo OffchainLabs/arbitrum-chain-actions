@@ -53,9 +53,7 @@ jobs:
         run: npm install --global yarn@1.22.22
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: 1.8.1
+        uses: ./.github/actions/install-foundry
 
       - name: Install dependencies
         run: yarn --frozen-lockfile
